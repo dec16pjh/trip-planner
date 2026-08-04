@@ -3,21 +3,31 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI 여행 플래너</title>
+<title>추억을 계획하세요</title>
 <style>
   body{margin:0;font-family:Arial,'Noto Sans KR',sans-serif;background:#f3f7f9;color:#263238}
-  header{background:linear-gradient(135deg,#123b52,#1e7898);color:white;padding:48px 0 32px;text-align:center}
+  header{background:linear-gradient(135deg,#123b52,#1e7898);color:white;padding:40px 0 32px;text-align:center}
   .wrap{max-width:640px;margin:auto;padding:0 18px}
-  h1{font-size:30px;margin:0 0 8px}
-  .sub{opacity:.9;margin:0}
-  form{background:white;margin:-24px 0 24px;border-radius:16px;padding:24px;box-shadow:0 4px 18px #0000000c;display:flex;flex-direction:column;gap:16px}
+  h1{font-size:28px;margin:0 0 8px}
+  .sub{opacity:.9;margin:0 0 16px}
+  .langSwitch{display:flex;gap:6px;justify-content:center}
+  .langSwitch button{background:rgba(255,255,255,.15);color:white;border:1px solid rgba(255,255,255,.4);padding:6px 14px;border-radius:999px;font-size:13px;cursor:pointer}
+  .langSwitch button.active{background:white;color:#123b52;font-weight:700;border-color:white}
+  form{background:white;margin:-20px 0 24px;border-radius:16px;padding:24px;box-shadow:0 4px 18px #0000000c;display:flex;flex-direction:column;gap:18px}
   label{font-weight:700;color:#123b52;font-size:14px;display:block;margin-bottom:6px}
   input,select,textarea{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #dbe4e8;border-radius:8px;font-size:15px;font-family:inherit}
-  textarea{resize:vertical;min-height:60px}
   .row{display:flex;gap:12px}
   .row>div{flex:1}
-  button{background:#1e7898;color:white;border:none;padding:14px;border-radius:999px;font-size:16px;font-weight:700;cursor:pointer}
-  button:disabled{background:#9fb9c3;cursor:not-allowed}
+  .categories{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{background:white;border:1px solid #dbe4e8;color:#263238;padding:8px 14px;border-radius:999px;font-size:14px;cursor:pointer}
+  .chip.active{background:#1e7898;border-color:#1e7898;color:white;font-weight:700}
+  .companions{display:flex;flex-direction:column;gap:8px}
+  .companionRow{display:flex;gap:8px;align-items:center}
+  .companionRow .idx{font-size:13px;color:#6d7880;width:56px;flex-shrink:0}
+  .companionRow select{flex:1}
+  .companionRow input{width:80px;flex-shrink:0}
+  button[type="submit"]{background:#1e7898;color:white;border:none;padding:14px;border-radius:999px;font-size:16px;font-weight:700;cursor:pointer}
+  button[type="submit"]:disabled{background:#9fb9c3;cursor:not-allowed}
   #status{text-align:center;color:#6d7880;font-size:14px;min-height:20px}
   #status.error{color:#c0392b}
   #result{display:none;margin-top:16px}
@@ -33,87 +43,325 @@
 <body>
 
 <header class="wrap">
-  <h1>AI 여행 플래너</h1>
-  <p class="sub">목적지와 조건만 알려주시면, 하루 단위 추천 일정을 짜드려요.</p>
+  <div class="langSwitch" id="langSwitch">
+    <button type="button" data-lang="ko">한국어</button>
+    <button type="button" data-lang="en">English</button>
+    <button type="button" data-lang="ja">日本語</button>
+  </div>
+  <h1 id="pageTitle"></h1>
+  <p class="sub" id="pageSub"></p>
 </header>
 
 <div class="wrap">
   <form id="tripForm">
     <div>
-      <label for="destination">목적지</label>
-      <input id="destination" name="destination" type="text" placeholder="예: 강릉, 부산, 제주" required maxlength="50">
+      <label id="lblDestination" for="destination"></label>
+      <input id="destination" name="destination" type="text" required maxlength="50">
     </div>
 
     <div class="row">
       <div>
-        <label for="days">기간 (일)</label>
-        <input id="days" name="days" type="number" min="1" max="10" value="2" required>
+        <label id="lblStartDate" for="startDate"></label>
+        <input id="startDate" name="startDate" type="date" required>
       </div>
       <div>
-        <label for="budget">예산</label>
-        <select id="budget" name="budget" required>
-          <option value="알뜰하게">알뜰하게</option>
-          <option value="무난하게" selected>무난하게</option>
-          <option value="프리미엄">프리미엄</option>
-        </select>
+        <label id="lblEndDate" for="endDate"></label>
+        <input id="endDate" name="endDate" type="date" required>
       </div>
     </div>
 
     <div>
-      <label for="companions">동행</label>
-      <input id="companions" name="companions" type="text" placeholder="예: 아이 둘과 가족, 친구 셋, 혼자" required maxlength="50">
+      <label id="lblBudget" for="budget"></label>
+      <select id="budget" name="budget" required>
+        <option value="low"></option>
+        <option value="mid" selected></option>
+        <option value="premium"></option>
+      </select>
     </div>
 
     <div>
-      <label for="interests">관심사 / 페이스 (선택)</label>
-      <textarea id="interests" name="interests" placeholder="예: 카페 위주로, 너무 빡빡하지 않게, 바다 사진 찍기" maxlength="200"></textarea>
+      <label id="lblCompanionsCount" for="companionsCount"></label>
+      <input id="companionsCount" name="companionsCount" type="number" min="1" max="10" value="1">
+      <div class="companions" id="companions" style="margin-top:10px"></div>
     </div>
 
-    <button type="submit" id="submitBtn">일정 만들기</button>
+    <div>
+      <label id="lblInterests"></label>
+      <div class="categories" id="categories"></div>
+    </div>
+
+    <div>
+      <label id="lblOther" for="interestOther"></label>
+      <input id="interestOther" name="interestOther" type="text" maxlength="200">
+    </div>
+
+    <button type="submit" id="submitBtn"></button>
   </form>
 
   <div id="status"></div>
   <div id="result">
     <div id="saveRow">
-      <button id="saveBtn" type="button">이 일정 저장·공유하기</button>
+      <button id="saveBtn" type="button"></button>
       <span id="saveStatus"></span>
     </div>
-    <iframe id="resultFrame" title="추천 일정"></iframe>
+    <iframe id="resultFrame" title="plan"></iframe>
   </div>
 </div>
 
-<footer>하루 IP당 요청 횟수가 제한되어 있어요. 생성에는 20~40초 정도 걸릴 수 있어요.</footer>
+<footer id="footerNote"></footer>
 
 <script>
   const API_BASE = "https://trip-planner-api.john-tium.workers.dev";
 
-  const form = document.getElementById("tripForm");
-  const statusEl = document.getElementById("status");
-  const resultEl = document.getElementById("result");
-  const resultFrame = document.getElementById("resultFrame");
-  const submitBtn = document.getElementById("submitBtn");
-  const saveBtn = document.getElementById("saveBtn");
-  const saveStatus = document.getElementById("saveStatus");
+  const STRINGS = {
+    ko: {
+      pageTitle: "추억을 계획하세요",
+      pageSub: "목적지와 조건만 알려주시면, 하루 단위 추천 일정을 짜드려요.",
+      destination: "목적지",
+      startDate: "시작일",
+      endDate: "종료일",
+      budget: "예산",
+      budgetOptions: { low: "알뜰하게", mid: "무난하게", premium: "프리미엄" },
+      companionsCount: "참가 인원",
+      companionLabel: (i) => `동행자 ${i}`,
+      genderOptions: { male: "남성", female: "여성", neutral: "선택 안 함" },
+      age: "나이",
+      interests: "관심사 (여러 개 선택 가능)",
+      categoryOptions: {
+        food: "맛집/미식", cafe: "카페", nature: "자연/힐링", activity: "액티비티/체험",
+        culture: "문화/역사", shopping: "쇼핑", nightview: "야경/포토스팟", kids: "아이와 함께",
+      },
+      other: "기타 (직접 입력)",
+      otherPlaceholder: "예: 반려동물 동반, 사진 스팟 위주로",
+      destinationPlaceholder: "예: 강릉, 부산, 제주",
+      submit: "일정 만들기",
+      loading: "일정을 만들고 있어요… (20~40초 정도 걸려요)",
+      done: "완성됐어요!",
+      save: "이 일정 저장·공유하기",
+      saving: "저장하는 중…",
+      saved: (url) => `저장 완료: ${url} (배포까지 1분 정도 걸릴 수 있어요)`,
+      footerNote: "하루 IP당 요청 횟수가 제한되어 있어요. 생성에는 20~40초 정도 걸릴 수 있어요.",
+      errDateRange: "종료일은 시작일과 같거나 이후여야 해요.",
+      errGeneric: "요청이 실패했어요",
+    },
+    en: {
+      pageTitle: "Plan Your Memories",
+      pageSub: "Tell us where you're going and who's coming — we'll build a day-by-day plan.",
+      destination: "Destination",
+      startDate: "Start date",
+      endDate: "End date",
+      budget: "Budget",
+      budgetOptions: { low: "Budget-friendly", mid: "Moderate", premium: "Premium" },
+      companionsCount: "Number of travelers",
+      companionLabel: (i) => `Traveler ${i}`,
+      genderOptions: { male: "Male", female: "Female", neutral: "Prefer not to say" },
+      age: "Age",
+      interests: "Interests (pick any that apply)",
+      categoryOptions: {
+        food: "Food & dining", cafe: "Cafes", nature: "Nature & relaxation", activity: "Activities & experiences",
+        culture: "Culture & history", shopping: "Shopping", nightview: "Night views & photo spots", kids: "Kid-friendly",
+      },
+      other: "Other (optional)",
+      otherPlaceholder: "e.g. traveling with a pet, mostly photo spots",
+      destinationPlaceholder: "e.g. Seoul, Kyoto, Bali",
+      submit: "Build my plan",
+      loading: "Building your plan… (takes about 20–40 seconds)",
+      done: "Done!",
+      save: "Save & share this plan",
+      saving: "Saving…",
+      saved: (url) => `Saved: ${url} (may take about a minute to go live)`,
+      footerNote: "Requests are limited per IP per day. Generation takes about 20–40 seconds.",
+      errDateRange: "End date must be on or after the start date.",
+      errGeneric: "Request failed",
+    },
+    ja: {
+      pageTitle: "思い出を計画しよう",
+      pageSub: "行き先と条件を教えてください。1日ごとのおすすめプランを作ります。",
+      destination: "旅行先",
+      startDate: "開始日",
+      endDate: "終了日",
+      budget: "予算",
+      budgetOptions: { low: "節約重視", mid: "standard", premium: "プレミアム" },
+      companionsCount: "参加人数",
+      companionLabel: (i) => `同行者 ${i}`,
+      genderOptions: { male: "男性", female: "女性", neutral: "回答しない" },
+      age: "年齢",
+      interests: "興味・関心(複数選択可)",
+      categoryOptions: {
+        food: "グルメ", cafe: "カフェ", nature: "自然・癒やし", activity: "アクティビティ・体験",
+        culture: "文化・歴史", shopping: "ショッピング", nightview: "夜景・フォトスポット", kids: "子供連れ向け",
+      },
+      other: "その他(自由入力)",
+      otherPlaceholder: "例:ペット同伴、写真スポット中心",
+      destinationPlaceholder: "例:東京、大阪、済州島",
+      submit: "プランを作成",
+      loading: "プランを作成中…(20〜40秒ほどかかります)",
+      done: "完成しました!",
+      save: "このプランを保存・共有",
+      saving: "保存中…",
+      saved: (url) => `保存しました: ${url}(反映まで1分ほどかかることがあります)`,
+      footerNote: "1日あたりのリクエスト回数はIPごとに制限されています。生成には20〜40秒ほどかかります。",
+      errDateRange: "終了日は開始日以降にしてください。",
+      errGeneric: "リクエストに失敗しました",
+    },
+  };
+
+  const CATEGORY_ORDER = ["food", "cafe", "nature", "activity", "culture", "shopping", "nightview", "kids"];
+
+  let lang = "ko";
+  const state = {
+    companions: [{ gender: "neutral", age: "" }],
+    categories: new Set(),
+  };
+
+  const els = {
+    langSwitch: document.getElementById("langSwitch"),
+    pageTitle: document.getElementById("pageTitle"),
+    pageSub: document.getElementById("pageSub"),
+    lblDestination: document.getElementById("lblDestination"),
+    destination: document.getElementById("destination"),
+    lblStartDate: document.getElementById("lblStartDate"),
+    startDate: document.getElementById("startDate"),
+    lblEndDate: document.getElementById("lblEndDate"),
+    endDate: document.getElementById("endDate"),
+    lblBudget: document.getElementById("lblBudget"),
+    budget: document.getElementById("budget"),
+    lblCompanionsCount: document.getElementById("lblCompanionsCount"),
+    companionsCount: document.getElementById("companionsCount"),
+    companions: document.getElementById("companions"),
+    lblInterests: document.getElementById("lblInterests"),
+    categories: document.getElementById("categories"),
+    lblOther: document.getElementById("lblOther"),
+    interestOther: document.getElementById("interestOther"),
+    submitBtn: document.getElementById("submitBtn"),
+    footerNote: document.getElementById("footerNote"),
+    form: document.getElementById("tripForm"),
+    status: document.getElementById("status"),
+    result: document.getElementById("result"),
+    resultFrame: document.getElementById("resultFrame"),
+    saveBtn: document.getElementById("saveBtn"),
+    saveStatus: document.getElementById("saveStatus"),
+  };
+
+  function renderCompanions() {
+    const t = STRINGS[lang];
+    els.companions.innerHTML = state.companions
+      .map(
+        (c, i) => `
+      <div class="companionRow">
+        <span class="idx">${t.companionLabel(i + 1)}</span>
+        <select data-idx="${i}" class="genderSelect">
+          <option value="male">${t.genderOptions.male}</option>
+          <option value="female">${t.genderOptions.female}</option>
+          <option value="neutral">${t.genderOptions.neutral}</option>
+        </select>
+        <input type="number" data-idx="${i}" class="ageInput" min="0" max="120" placeholder="${t.age}" value="${c.age}">
+      </div>`
+      )
+      .join("");
+
+    els.companions.querySelectorAll(".genderSelect").forEach((sel) => {
+      const idx = parseInt(sel.dataset.idx, 10);
+      sel.value = state.companions[idx].gender;
+      sel.addEventListener("change", () => (state.companions[idx].gender = sel.value));
+    });
+    els.companions.querySelectorAll(".ageInput").forEach((inp) => {
+      const idx = parseInt(inp.dataset.idx, 10);
+      inp.addEventListener("input", () => (state.companions[idx].age = inp.value));
+    });
+  }
+
+  function renderCategories() {
+    const t = STRINGS[lang];
+    els.categories.innerHTML = CATEGORY_ORDER.map(
+      (code) => `<button type="button" class="chip${state.categories.has(code) ? " active" : ""}" data-code="${code}">${t.categoryOptions[code]}</button>`
+    ).join("");
+
+    els.categories.querySelectorAll(".chip").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const code = btn.dataset.code;
+        if (state.categories.has(code)) state.categories.delete(code);
+        else state.categories.add(code);
+        btn.classList.toggle("active");
+      });
+    });
+  }
+
+  function applyLanguage() {
+    const t = STRINGS[lang];
+    document.documentElement.lang = lang;
+    document.title = t.pageTitle;
+
+    els.langSwitch.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.lang === lang));
+    els.pageTitle.textContent = t.pageTitle;
+    els.pageSub.textContent = t.pageSub;
+    els.lblDestination.textContent = t.destination;
+    els.destination.placeholder = t.destinationPlaceholder;
+    els.lblStartDate.textContent = t.startDate;
+    els.lblEndDate.textContent = t.endDate;
+    els.lblBudget.textContent = t.budget;
+    els.budget.options[0].textContent = t.budgetOptions.low;
+    els.budget.options[1].textContent = t.budgetOptions.mid;
+    els.budget.options[2].textContent = t.budgetOptions.premium;
+    els.lblCompanionsCount.textContent = t.companionsCount;
+    els.lblInterests.textContent = t.interests;
+    els.lblOther.textContent = t.other;
+    els.interestOther.placeholder = t.otherPlaceholder;
+    els.submitBtn.textContent = t.submit;
+    els.footerNote.textContent = t.footerNote;
+    els.saveBtn.textContent = t.save;
+
+    renderCompanions();
+    renderCategories();
+  }
+
+  els.langSwitch.querySelectorAll("button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      lang = btn.dataset.lang;
+      applyLanguage();
+    });
+  });
+
+  els.companionsCount.addEventListener("input", () => {
+    let n = parseInt(els.companionsCount.value, 10);
+    if (!Number.isInteger(n) || n < 1) n = 1;
+    if (n > 10) n = 10;
+    while (state.companions.length < n) state.companions.push({ gender: "neutral", age: "" });
+    state.companions.length = n;
+    renderCompanions();
+  });
+
+  applyLanguage();
 
   let lastGeneratedHtml = "";
 
-  form.addEventListener("submit", async (e) => {
+  els.form.addEventListener("submit", async (e) => {
     e.preventDefault();
+    const t = STRINGS[lang];
+
+    if (els.endDate.value < els.startDate.value) {
+      els.status.className = "error";
+      els.status.textContent = t.errDateRange;
+      return;
+    }
 
     const payload = {
-      destination: document.getElementById("destination").value.trim(),
-      days: parseInt(document.getElementById("days").value, 10),
-      companions: document.getElementById("companions").value.trim(),
-      budget: document.getElementById("budget").value,
-      interests: document.getElementById("interests").value.trim(),
+      destination: els.destination.value.trim(),
+      startDate: els.startDate.value,
+      endDate: els.endDate.value,
+      budget: els.budget.value,
+      companions: state.companions.map((c) => ({ gender: c.gender, age: parseInt(c.age, 10) })),
+      interestCategories: Array.from(state.categories),
+      interestOther: els.interestOther.value.trim(),
+      language: lang,
     };
 
-    submitBtn.disabled = true;
-    statusEl.className = "";
-    statusEl.textContent = "일정을 만들고 있어요… (20~40초 정도 걸려요)";
-    resultEl.style.display = "none";
-    saveStatus.textContent = "";
-    saveBtn.disabled = false;
+    els.submitBtn.disabled = true;
+    els.status.className = "";
+    els.status.textContent = t.loading;
+    els.result.style.display = "none";
+    els.saveStatus.textContent = "";
+    els.saveBtn.disabled = false;
 
     try {
       const resp = await fetch(`${API_BASE}/generate`, {
@@ -124,28 +372,29 @@
 
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        throw new Error(data.error || `요청이 실패했어요 (${resp.status})`);
+        throw new Error(data.error || `${t.errGeneric} (${resp.status})`);
       }
 
       const html = await resp.text();
       lastGeneratedHtml = html;
-      resultFrame.srcdoc = html;
-      resultEl.style.display = "block";
-      statusEl.textContent = "완성됐어요!";
-      resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      els.resultFrame.srcdoc = html;
+      els.result.style.display = "block";
+      els.status.textContent = t.done;
+      els.result.scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (err) {
-      statusEl.className = "error";
-      statusEl.textContent = err.message;
+      els.status.className = "error";
+      els.status.textContent = err.message;
     } finally {
-      submitBtn.disabled = false;
+      els.submitBtn.disabled = false;
     }
   });
 
-  saveBtn.addEventListener("click", async () => {
+  els.saveBtn.addEventListener("click", async () => {
     if (!lastGeneratedHtml) return;
+    const t = STRINGS[lang];
 
-    saveBtn.disabled = true;
-    saveStatus.textContent = "저장하는 중…";
+    els.saveBtn.disabled = true;
+    els.saveStatus.textContent = t.saving;
 
     try {
       const resp = await fetch(`${API_BASE}/save`, {
@@ -155,12 +404,13 @@
       });
 
       const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) throw new Error(data.error || `저장에 실패했어요 (${resp.status})`);
+      if (!resp.ok) throw new Error(data.error || `${t.errGeneric} (${resp.status})`);
 
-      saveStatus.innerHTML = `저장 완료: <a href="${data.url}" target="_blank" rel="noopener">${data.url}</a> (배포까지 1분 정도 걸릴 수 있어요)`;
+      els.saveStatus.innerHTML = `<a href="${data.url}" target="_blank" rel="noopener">${data.url}</a>`;
+      els.saveStatus.prepend(document.createTextNode(""));
     } catch (err) {
-      saveStatus.textContent = err.message;
-      saveBtn.disabled = false;
+      els.saveStatus.textContent = err.message;
+      els.saveBtn.disabled = false;
     }
   });
 </script>
