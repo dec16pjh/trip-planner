@@ -18,10 +18,13 @@ function doPost(e) {
     sheet.appendRow([
       new Date(data.timestamp || Date.now()),
       data.destination || "",
+      data.startDate || "",
+      data.endDate || "",
       data.days || "",
       data.companions || "",
       data.budget || "",
       data.interests || "",
+      data.language || "",
       data.resultTitle || "",
     ]);
 
