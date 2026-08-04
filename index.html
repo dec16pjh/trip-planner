@@ -22,6 +22,11 @@
   #status.error{color:#c0392b}
   #result{display:none;margin-top:16px}
   #result iframe{width:100%;height:80vh;border:1px solid #dbe4e8;border-radius:12px;background:white}
+  #saveRow{display:flex;gap:10px;align-items:center;margin:12px 0;flex-wrap:wrap}
+  #saveBtn{background:white;color:#1e7898;border:1px solid #1e7898;padding:10px 18px;border-radius:999px;font-size:14px;font-weight:700;cursor:pointer;flex-shrink:0}
+  #saveBtn:disabled{opacity:.5;cursor:not-allowed}
+  #saveStatus{font-size:14px;color:#6d7880}
+  #saveStatus a{color:#1e7898;font-weight:700}
   footer{text-align:center;color:#6d7880;font-size:12px;padding:24px 0 40px}
 </style>
 </head>
@@ -68,19 +73,29 @@
   </form>
 
   <div id="status"></div>
-  <div id="result"><iframe id="resultFrame" title="추천 일정"></iframe></div>
+  <div id="result">
+    <div id="saveRow">
+      <button id="saveBtn" type="button">이 일정 저장·공유하기</button>
+      <span id="saveStatus"></span>
+    </div>
+    <iframe id="resultFrame" title="추천 일정"></iframe>
+  </div>
 </div>
 
 <footer>하루 IP당 요청 횟수가 제한되어 있어요. 생성에는 20~40초 정도 걸릴 수 있어요.</footer>
 
 <script>
-  const API_URL = "https://trip-planner-api.john-tium.workers.dev/generate";
+  const API_BASE = "https://trip-planner-api.john-tium.workers.dev";
 
   const form = document.getElementById("tripForm");
   const statusEl = document.getElementById("status");
   const resultEl = document.getElementById("result");
   const resultFrame = document.getElementById("resultFrame");
   const submitBtn = document.getElementById("submitBtn");
+  const saveBtn = document.getElementById("saveBtn");
+  const saveStatus = document.getElementById("saveStatus");
+
+  let lastGeneratedHtml = "";
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -97,9 +112,11 @@
     statusEl.className = "";
     statusEl.textContent = "일정을 만들고 있어요… (20~40초 정도 걸려요)";
     resultEl.style.display = "none";
+    saveStatus.textContent = "";
+    saveBtn.disabled = false;
 
     try {
-      const resp = await fetch(API_URL, {
+      const resp = await fetch(`${API_BASE}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -111,6 +128,7 @@
       }
 
       const html = await resp.text();
+      lastGeneratedHtml = html;
       resultFrame.srcdoc = html;
       resultEl.style.display = "block";
       statusEl.textContent = "완성됐어요!";
@@ -120,6 +138,29 @@
       statusEl.textContent = err.message;
     } finally {
       submitBtn.disabled = false;
+    }
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    if (!lastGeneratedHtml) return;
+
+    saveBtn.disabled = true;
+    saveStatus.textContent = "저장하는 중…";
+
+    try {
+      const resp = await fetch(`${API_BASE}/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ html: lastGeneratedHtml }),
+      });
+
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `저장에 실패했어요 (${resp.status})`);
+
+      saveStatus.innerHTML = `저장 완료: <a href="${data.url}" target="_blank" rel="noopener">${data.url}</a> (배포까지 1분 정도 걸릴 수 있어요)`;
+    } catch (err) {
+      saveStatus.textContent = err.message;
+      saveBtn.disabled = false;
     }
   });
 </script>
