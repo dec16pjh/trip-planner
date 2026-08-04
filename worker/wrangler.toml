@@ -13,3 +13,7 @@ DAILY_LIMIT_PER_IP = "5"
 # Where /save publishes finished plans. Not secret — just the public repo this API pushes into.
 GITHUB_OWNER = "dec16pjh"
 GITHUB_REPO = "trip-planner"
+# Google Apps Script Web App URL that appends a row per /generate call. Fill in after
+# deploying google-apps-script.gs. Not secret by itself — SHEETS_SECRET (a wrangler
+# secret) is what actually protects it from randoms who might find the URL.
+SHEETS_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbwkBYCbG9CmOuMAHALdlZw5SWlRwx0L1ah_6WWLFMIY51GQY73z3DHOn4UjXYKyiJrr9w/exec"

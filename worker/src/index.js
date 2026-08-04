@@ -2,8 +2,8 @@
 // mirroring the "trip-plan-추천형" style (day tabs, timed cards, food/activity color coding).
 // Also supports opt-in publishing of a finished plan to GitHub Pages.
 //
-// POST /generate  { destination, days, companions, budget, interests }
-// -> 200 text/html  (the finished itinerary page)
+// POST /generate  { destination, startDate, endDate, companions: [{gender, age}], budget, interestCategories, interestOther, language }
+// -> 200 text/html  (the finished itinerary page, written entirely in the requested language)
 //
 // POST /save  { html }
 // -> 200 json { url }  (pushes the given HTML into the GITHUB_REPO's /plans folder and returns its Pages URL)
@@ -12,6 +12,29 @@
 
 const MODEL = "claude-sonnet-5"; // Haiku 4.5 was unreliable at following the destination/structure instructions in testing; Sonnet costs more per call but the per-IP daily cap bounds worst-case spend
 const MAX_SAVE_HTML_BYTES = 300_000; // generous headroom over a normal generated plan; blocks abuse of /save as free file storage
+
+const LANGUAGES = {
+  ko: "Korean",
+  en: "English",
+  ja: "Japanese",
+};
+
+const GENDER_LABELS = {
+  male: "male",
+  female: "female",
+  neutral: "prefers not to specify gender",
+};
+
+const CATEGORY_LABELS = {
+  food: "restaurants/local food",
+  cafe: "cafes",
+  nature: "nature/relaxation",
+  activity: "activities/experiences",
+  culture: "culture/history",
+  shopping: "shopping",
+  nightview: "night views/photo spots",
+  kids: "kid-friendly",
+};
 
 function corsHeaders(env) {
   return {
@@ -50,12 +73,15 @@ async function checkAndBumpRateLimit(action, ip, env) {
   return true;
 }
 
-const SYSTEM_PROMPT = `You are a Korean travel planner. Given a destination, trip length, companions, budget level, and interests, write ONE complete, opinionated, day-by-day recommended itinerary — not a menu of options. Make the concrete calls (which cafe, what order, when to eat) the way a knowledgeable local friend would.
+function buildSystemPrompt(languageName, langCode) {
+  return `You are a travel planner. Given a destination, date range, companions (with gender and age), budget level, and interests, write ONE complete, opinionated, day-by-day recommended itinerary — not a menu of options. Make the concrete calls (which cafe, what order, when to eat) the way a knowledgeable local friend would, and tailor suggestions to the companions' ages (e.g. a 5-year-old and a 70-year-old both traveling means less walking, earlier meals, more rest stops — say so explicitly where it matters).
+
+Write EVERY piece of visible text in the output — title, headings, card contents, notes, footer — entirely in ${languageName}. This is a hard requirement regardless of what language this prompt is written in.
 
 Output ONLY a single complete HTML document (starting with <!doctype html>, nothing before or after it — no markdown fences, no commentary). Use exactly this structure and CSS so the result matches the site's existing design language:
 
 <!doctype html>
-<html lang="ko">
+<html lang="${langCode}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -92,18 +118,30 @@ footer{padding:40px 0;color:#6d7880;font-size:13px}
 
 Rules:
 - No header <img>, no base64 images — the header is the CSS gradient only. Never invent an image URL.
-- Don't invent specific restaurant/business names you're not reasonably confident exist; when unsure, describe the category instead (e.g. "오션뷰 카페 한 곳").
+- Don't invent specific restaurant/business names you're not reasonably confident exist; when unsure, describe the category instead (translated into ${languageName}, e.g. "an ocean-view cafe").
 - Card class: plain "card" for transit/logistics, "card alt" for sightseeing/activities, "card food" for meals — use the color coding consistently.
 - Match the number of days requested exactly — one tab and one <section> per day.
-- Write everything in Korean.
 - Output nothing but the HTML document.`;
+}
 
 async function generateItinerary(input, env) {
-  const userPrompt = `목적지: ${input.destination}
-기간: ${input.days}일
-동행: ${input.companions}
-예산: ${input.budget}
-관심사/속도: ${input.interests || "특별히 없음, 무리 없는 속도로"}`;
+  const languageName = LANGUAGES[input.language] || LANGUAGES.ko;
+  const companionsDesc = input.companions
+    .map((c) => `${GENDER_LABELS[c.gender] || "unspecified gender"}, age ${c.age}`)
+    .join("; ");
+  const interestsDesc = [
+    ...input.interestCategories.map((c) => CATEGORY_LABELS[c] || c),
+    input.interestOther,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  const userPrompt = `Destination: ${input.destination}
+Dates: ${input.startDate} to ${input.endDate} (${input.days} day${input.days > 1 ? "s" : ""})
+Companions (${input.companions.length}): ${companionsDesc}
+Budget level: ${input.budget}
+Interests: ${interestsDesc || "no strong preference, keep the pace comfortable"}
+Output language: ${languageName}`;
 
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -115,7 +153,7 @@ async function generateItinerary(input, env) {
     body: JSON.stringify({
       model: MODEL,
       max_tokens: 8000,
-      system: SYSTEM_PROMPT,
+      system: buildSystemPrompt(languageName, input.language),
       messages: [{ role: "user", content: userPrompt }],
     }),
   });
@@ -140,6 +178,22 @@ async function generateItinerary(input, env) {
     throw new Error(`Model did not return an HTML document (got: ${html.slice(0, 200)})`);
   }
   return html.slice(doctypeIndex);
+}
+
+// Fire-and-forget log of one /generate call to a Google Sheet via an Apps Script Web App
+// (see google-apps-script.gs). Never throws — a logging failure must not break the
+// user-facing response, so errors just go to the Worker's own console/tail output.
+async function logToSheet(entry, env) {
+  if (!env.SHEETS_WEBHOOK_URL) return; // logging not configured yet, skip quietly
+  try {
+    await fetch(env.SHEETS_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ secret: env.SHEETS_SECRET, ...entry }),
+    });
+  } catch (err) {
+    console.error("Sheets logging failed:", err.message);
+  }
 }
 
 function bytesToBase64(bytes) {
@@ -184,7 +238,9 @@ async function saveToGithub(html, env) {
   return `https://${env.GITHUB_OWNER}.github.io/${env.GITHUB_REPO}/${path}`;
 }
 
-async function handleGenerate(request, env) {
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+async function handleGenerate(request, env, ctx) {
   let body;
   try {
     body = await request.json();
@@ -193,36 +249,78 @@ async function handleGenerate(request, env) {
   }
 
   const destination = clamp(body.destination, 100);
-  const days = parseInt(body.days, 10);
-  const companions = clamp(body.companions, 100);
-  const budget = clamp(body.budget, 50);
-  const interests = clamp(body.interests, 300);
+  const startDate = clamp(body.startDate, 10);
+  const endDate = clamp(body.endDate, 10);
+  const budget = clamp(body.budget, 20);
+  const language = clamp(body.language, 5);
+  const interestOther = clamp(body.interestOther, 200);
+  const interestCategories = Array.isArray(body.interestCategories)
+    ? body.interestCategories.filter((c) => typeof c === "string" && CATEGORY_LABELS[c]).slice(0, 20)
+    : [];
+  const companions = Array.isArray(body.companions)
+    ? body.companions.slice(0, 10).map((c) => ({
+        gender: GENDER_LABELS[c?.gender] ? c.gender : "neutral",
+        age: parseInt(c?.age, 10),
+      }))
+    : [];
 
   if (!destination) return jsonError("destination is required", 400, env);
-  if (!Number.isInteger(days) || days < 1 || days > 10) {
-    return jsonError("days must be an integer between 1 and 10", 400, env);
-  }
-  if (!companions) return jsonError("companions is required", 400, env);
+  if (!LANGUAGES[language]) return jsonError("language must be one of ko, en, ja", 400, env);
   if (!budget) return jsonError("budget is required", 400, env);
+
+  const start = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  if (isNaN(start) || isNaN(end) || end < start) {
+    return jsonError("startDate/endDate must be a valid range", 400, env);
+  }
+  const days = Math.round((end - start) / DAY_MS) + 1;
+  if (days > 10) return jsonError("trip length must be 10 days or fewer", 400, env);
+
+  if (companions.length < 1 || companions.some((c) => !Number.isInteger(c.age) || c.age < 0 || c.age > 120)) {
+    return jsonError("companions must be a non-empty list with a valid age each", 400, env);
+  }
 
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
   const allowed = await checkAndBumpRateLimit("generate", ip, env);
   if (!allowed) {
     return jsonError(
-      `오늘 요청 한도(하루 ${env.DAILY_LIMIT_PER_IP || 5}회)를 초과했어요. 내일 다시 시도해주세요.`,
+      `Daily request limit (${env.DAILY_LIMIT_PER_IP || 5}) reached. Please try again tomorrow.`,
       429,
       env
     );
   }
 
   try {
-    const html = await generateItinerary({ destination, days, companions, budget, interests }, env);
+    const html = await generateItinerary(
+      { destination, startDate, endDate, days, companions, budget, interestCategories, interestOther, language },
+      env
+    );
+
+    const titleMatch = html.match(/<title>([^<]*)<\/title>/i);
+    ctx.waitUntil(
+      logToSheet(
+        {
+          timestamp: Date.now(),
+          destination,
+          startDate,
+          endDate,
+          days,
+          companions: companions.map((c) => `${c.gender}/${c.age}`).join(", "),
+          budget,
+          interests: [...interestCategories, interestOther].filter(Boolean).join(", "),
+          language,
+          resultTitle: titleMatch ? titleMatch[1] : "",
+        },
+        env
+      )
+    );
+
     return new Response(html, {
       status: 200,
       headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders(env) },
     });
   } catch (err) {
-    return jsonError(`일정 생성에 실패했어요: ${err.message}`, 502, env);
+    return jsonError(`Generation failed: ${err.message}`, 502, env);
   }
 }
 
@@ -265,7 +363,7 @@ async function handleSave(request, env) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders(env) });
     }
@@ -273,7 +371,7 @@ export default {
     const url = new URL(request.url);
     if (request.method !== "POST") return jsonError("Not found", 404, env);
 
-    if (url.pathname === "/generate") return handleGenerate(request, env);
+    if (url.pathname === "/generate") return handleGenerate(request, env, ctx);
     if (url.pathname === "/save") return handleSave(request, env);
     return jsonError("Not found", 404, env);
   },
