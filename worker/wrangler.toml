@@ -10,3 +10,6 @@ id = "2de6f6cd3c2e48529a6a1acad1153900"
 # ALLOWED_ORIGIN is safe to keep here (not a secret) - the GitHub Pages origin allowed to call this API.
 ALLOWED_ORIGIN = "https://dec16pjh.github.io"
 DAILY_LIMIT_PER_IP = "5"
+# Where /save publishes finished plans. Not secret — just the public repo this API pushes into.
+GITHUB_OWNER = "dec16pjh"
+GITHUB_REPO = "trip-planner"
