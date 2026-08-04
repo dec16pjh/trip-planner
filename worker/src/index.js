@@ -1,11 +1,17 @@
 // Trip Planner API — generates a recommended trip itinerary as HTML using Claude,
 // mirroring the "trip-plan-추천형" style (day tabs, timed cards, food/activity color coding).
+// Also supports opt-in publishing of a finished plan to GitHub Pages.
 //
 // POST /generate  { destination, days, companions, budget, interests }
 // -> 200 text/html  (the finished itinerary page)
-// -> 400 for bad input, 429 for rate limit, 502 for upstream failure — all JSON, all CORS'd.
+//
+// POST /save  { html }
+// -> 200 json { url }  (pushes the given HTML into the GITHUB_REPO's /plans folder and returns its Pages URL)
+//
+// All error responses are JSON and carry CORS headers.
 
 const MODEL = "claude-sonnet-5"; // Haiku 4.5 was unreliable at following the destination/structure instructions in testing; Sonnet costs more per call but the per-IP daily cap bounds worst-case spend
+const MAX_SAVE_HTML_BYTES = 300_000; // generous headroom over a normal generated plan; blocks abuse of /save as free file storage
 
 function corsHeaders(env) {
   return {
@@ -29,9 +35,11 @@ function clamp(str, max) {
   return str.slice(0, max).trim();
 }
 
-async function checkAndBumpRateLimit(ip, env) {
+// Shared IP+day bucket, namespaced per action so /generate (expensive, Claude call) and
+// /save (cheap, GitHub API call) don't eat into each other's quota.
+async function checkAndBumpRateLimit(action, ip, env) {
   const today = new Date().toISOString().slice(0, 10); // UTC day bucket, good enough for abuse control
-  const key = `${ip}:${today}`;
+  const key = `${action}:${ip}:${today}`;
   const limit = parseInt(env.DAILY_LIMIT_PER_IP || "5", 10);
 
   const current = parseInt((await env.RATE_LIMIT.get(key)) || "0", 10);
@@ -134,6 +142,128 @@ async function generateItinerary(input, env) {
   return html.slice(doctypeIndex);
 }
 
+function bytesToBase64(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+// Pushes one HTML file into GITHUB_REPO's /plans folder via the GitHub Contents API
+// and returns the GitHub Pages URL it will be served at once Pages rebuilds.
+async function saveToGithub(html, env) {
+  const now = new Date();
+  const datePart = now.toISOString().slice(0, 10).replace(/-/g, "");
+  const randomId = crypto.randomUUID().slice(0, 8);
+  const path = `plans/${datePart}-${randomId}.html`;
+
+  const contentBase64 = bytesToBase64(new TextEncoder().encode(html));
+
+  const resp = await fetch(
+    `https://api.github.com/repos/${env.GITHUB_OWNER}/${env.GITHUB_REPO}/contents/${path}`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${env.GITHUB_TOKEN}`,
+        "Content-Type": "application/json",
+        "User-Agent": "trip-planner-api",
+        Accept: "application/vnd.github+json",
+      },
+      body: JSON.stringify({
+        message: `Save generated plan ${path}`,
+        content: contentBase64,
+        branch: "main",
+      }),
+    }
+  );
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`GitHub API ${resp.status}: ${text.slice(0, 300)}`);
+  }
+
+  return `https://${env.GITHUB_OWNER}.github.io/${env.GITHUB_REPO}/${path}`;
+}
+
+async function handleGenerate(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonError("Invalid JSON body", 400, env);
+  }
+
+  const destination = clamp(body.destination, 100);
+  const days = parseInt(body.days, 10);
+  const companions = clamp(body.companions, 100);
+  const budget = clamp(body.budget, 50);
+  const interests = clamp(body.interests, 300);
+
+  if (!destination) return jsonError("destination is required", 400, env);
+  if (!Number.isInteger(days) || days < 1 || days > 10) {
+    return jsonError("days must be an integer between 1 and 10", 400, env);
+  }
+  if (!companions) return jsonError("companions is required", 400, env);
+  if (!budget) return jsonError("budget is required", 400, env);
+
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  const allowed = await checkAndBumpRateLimit("generate", ip, env);
+  if (!allowed) {
+    return jsonError(
+      `오늘 요청 한도(하루 ${env.DAILY_LIMIT_PER_IP || 5}회)를 초과했어요. 내일 다시 시도해주세요.`,
+      429,
+      env
+    );
+  }
+
+  try {
+    const html = await generateItinerary({ destination, days, companions, budget, interests }, env);
+    return new Response(html, {
+      status: 200,
+      headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders(env) },
+    });
+  } catch (err) {
+    return jsonError(`일정 생성에 실패했어요: ${err.message}`, 502, env);
+  }
+}
+
+async function handleSave(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonError("Invalid JSON body", 400, env);
+  }
+
+  const html = typeof body.html === "string" ? body.html.trim() : "";
+  if (!html) return jsonError("html is required", 400, env);
+  if (new TextEncoder().encode(html).length > MAX_SAVE_HTML_BYTES) {
+    return jsonError("html is too large", 400, env);
+  }
+  if (!/^<!doctype html/i.test(html)) {
+    return jsonError("html must be a full HTML document", 400, env);
+  }
+
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  const allowed = await checkAndBumpRateLimit("save", ip, env);
+  if (!allowed) {
+    return jsonError(
+      `오늘 저장 한도(하루 ${env.DAILY_LIMIT_PER_IP || 5}회)를 초과했어요. 내일 다시 시도해주세요.`,
+      429,
+      env
+    );
+  }
+
+  try {
+    const url = await saveToGithub(html, env);
+    return new Response(JSON.stringify({ url }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", ...corsHeaders(env) },
+    });
+  } catch (err) {
+    return jsonError(`저장에 실패했어요: ${err.message}`, 502, env);
+  }
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") {
@@ -141,48 +271,10 @@ export default {
     }
 
     const url = new URL(request.url);
-    if (url.pathname !== "/generate" || request.method !== "POST") {
-      return jsonError("Not found", 404, env);
-    }
+    if (request.method !== "POST") return jsonError("Not found", 404, env);
 
-    let body;
-    try {
-      body = await request.json();
-    } catch {
-      return jsonError("Invalid JSON body", 400, env);
-    }
-
-    const destination = clamp(body.destination, 100);
-    const days = parseInt(body.days, 10);
-    const companions = clamp(body.companions, 100);
-    const budget = clamp(body.budget, 50);
-    const interests = clamp(body.interests, 300);
-
-    if (!destination) return jsonError("destination is required", 400, env);
-    if (!Number.isInteger(days) || days < 1 || days > 10) {
-      return jsonError("days must be an integer between 1 and 10", 400, env);
-    }
-    if (!companions) return jsonError("companions is required", 400, env);
-    if (!budget) return jsonError("budget is required", 400, env);
-
-    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-    const allowed = await checkAndBumpRateLimit(ip, env);
-    if (!allowed) {
-      return jsonError(
-        `오늘 요청 한도(하루 ${env.DAILY_LIMIT_PER_IP || 5}회)를 초과했어요. 내일 다시 시도해주세요.`,
-        429,
-        env
-      );
-    }
-
-    try {
-      const html = await generateItinerary({ destination, days, companions, budget, interests }, env);
-      return new Response(html, {
-        status: 200,
-        headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders(env) },
-      });
-    } catch (err) {
-      return jsonError(`일정 생성에 실패했어요: ${err.message}`, 502, env);
-    }
+    if (url.pathname === "/generate") return handleGenerate(request, env);
+    if (url.pathname === "/save") return handleSave(request, env);
+    return jsonError("Not found", 404, env);
   },
 };
