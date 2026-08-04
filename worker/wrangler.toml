@@ -1,0 +1,12 @@
+name = "trip-planner-api"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "2de6f6cd3c2e48529a6a1acad1153900"
+
+[vars]
+# ALLOWED_ORIGIN is safe to keep here (not a secret) - the GitHub Pages origin allowed to call this API.
+ALLOWED_ORIGIN = "https://dec16pjh.github.io"
+DAILY_LIMIT_PER_IP = "5"
