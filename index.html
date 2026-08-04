@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI 여행 플래너</title>
+<style>
+  body{margin:0;font-family:Arial,'Noto Sans KR',sans-serif;background:#f3f7f9;color:#263238}
+  header{background:linear-gradient(135deg,#123b52,#1e7898);color:white;padding:48px 0 32px;text-align:center}
+  .wrap{max-width:640px;margin:auto;padding:0 18px}
+  h1{font-size:30px;margin:0 0 8px}
+  .sub{opacity:.9;margin:0}
+  form{background:white;margin:-24px 0 24px;border-radius:16px;padding:24px;box-shadow:0 4px 18px #0000000c;display:flex;flex-direction:column;gap:16px}
+  label{font-weight:700;color:#123b52;font-size:14px;display:block;margin-bottom:6px}
+  input,select,textarea{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #dbe4e8;border-radius:8px;font-size:15px;font-family:inherit}
+  textarea{resize:vertical;min-height:60px}
+  .row{display:flex;gap:12px}
+  .row>div{flex:1}
+  button{background:#1e7898;color:white;border:none;padding:14px;border-radius:999px;font-size:16px;font-weight:700;cursor:pointer}
+  button:disabled{background:#9fb9c3;cursor:not-allowed}
+  #status{text-align:center;color:#6d7880;font-size:14px;min-height:20px}
+  #status.error{color:#c0392b}
+  #result{display:none;margin-top:16px}
+  #result iframe{width:100%;height:80vh;border:1px solid #dbe4e8;border-radius:12px;background:white}
+  footer{text-align:center;color:#6d7880;font-size:12px;padding:24px 0 40px}
+</style>
+</head>
+<body>
+
+<header class="wrap">
+  <h1>AI 여행 플래너</h1>
+  <p class="sub">목적지와 조건만 알려주시면, 하루 단위 추천 일정을 짜드려요.</p>
+</header>
+
+<div class="wrap">
+  <form id="tripForm">
+    <div>
+      <label for="destination">목적지</label>
+      <input id="destination" name="destination" type="text" placeholder="예: 강릉, 부산, 제주" required maxlength="50">
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="days">기간 (일)</label>
+        <input id="days" name="days" type="number" min="1" max="10" value="2" required>
+      </div>
+      <div>
+        <label for="budget">예산</label>
+        <select id="budget" name="budget" required>
+          <option value="알뜰하게">알뜰하게</option>
+          <option value="무난하게" selected>무난하게</option>
+          <option value="프리미엄">프리미엄</option>
+        </select>
+      </div>
+    </div>
+
+    <div>
+      <label for="companions">동행</label>
+      <input id="companions" name="companions" type="text" placeholder="예: 아이 둘과 가족, 친구 셋, 혼자" required maxlength="50">
+    </div>
+
+    <div>
+      <label for="interests">관심사 / 페이스 (선택)</label>
+      <textarea id="interests" name="interests" placeholder="예: 카페 위주로, 너무 빡빡하지 않게, 바다 사진 찍기" maxlength="200"></textarea>
+    </div>
+
+    <button type="submit" id="submitBtn">일정 만들기</button>
+  </form>
+
+  <div id="status"></div>
+  <div id="result"><iframe id="resultFrame" title="추천 일정"></iframe></div>
+</div>
+
+<footer>하루 IP당 요청 횟수가 제한되어 있어요. 생성에는 20~40초 정도 걸릴 수 있어요.</footer>
+
+<script>
+  const API_URL = "https://trip-planner-api.john-tium.workers.dev/generate";
+
+  const form = document.getElementById("tripForm");
+  const statusEl = document.getElementById("status");
+  const resultEl = document.getElementById("result");
+  const resultFrame = document.getElementById("resultFrame");
+  const submitBtn = document.getElementById("submitBtn");
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const payload = {
+      destination: document.getElementById("destination").value.trim(),
+      days: parseInt(document.getElementById("days").value, 10),
+      companions: document.getElementById("companions").value.trim(),
+      budget: document.getElementById("budget").value,
+      interests: document.getElementById("interests").value.trim(),
+    };
+
+    submitBtn.disabled = true;
+    statusEl.className = "";
+    statusEl.textContent = "일정을 만들고 있어요… (20~40초 정도 걸려요)";
+    resultEl.style.display = "none";
+
+    try {
+      const resp = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.error || `요청이 실패했어요 (${resp.status})`);
+      }
+
+      const html = await resp.text();
+      resultFrame.srcdoc = html;
+      resultEl.style.display = "block";
+      statusEl.textContent = "완성됐어요!";
+      resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (err) {
+      statusEl.className = "error";
+      statusEl.textContent = err.message;
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+</script>
+
+</body>
+</html>
