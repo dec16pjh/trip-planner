@@ -101,7 +101,16 @@ h2{color:#123b52;margin-top:36px}
 .card.food{background:#fff4dc}
 .note{background:#fff4dc;border-left:5px solid #f47c67;padding:16px;border-radius:8px;margin:20px 0}
 footer{padding:40px 0;color:#6d7880;font-size:13px}
-@media(max-width:600px){h1{font-size:27px}.card{grid-template-columns:1fr}.time{margin-bottom:6px}}
+.linkgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.linkbox{background:#fff;border-radius:16px;padding:16px;box-shadow:0 4px 18px #0000000c}
+.linkbox h3{margin:0 0 10px;color:#123b52}
+.spot{position:relative;padding:11px 92px 11px 0;border-top:1px solid #e7eef1}
+.spot:first-of-type{border-top:0}
+.spot b,.spot span{display:block}
+.spot span{font-size:13px;color:#6d7880;margin-top:3px}
+.maps{position:absolute;right:0;top:10px;display:flex;gap:5px}
+.maps a{display:inline-flex;width:25px;height:25px;align-items:center;justify-content:center;border-radius:50%;background:#e6f4f8;color:#12637d;text-decoration:none;font-size:12px;font-weight:700}
+@media(max-width:600px){h1{font-size:27px}.card{grid-template-columns:1fr}.time{margin-bottom:6px}.linkgrid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -110,8 +119,19 @@ footer{padding:40px 0;color:#6d7880;font-size:13px}
 <nav class="tabs">[one <a href="#dN">DAY N</a> per day]</nav>
 <main>
 [one <section> per day: <h2 id="dN">DAY N — [theme]</h2> then several .card / .card.alt / .card.food divs, each with a .time div and a bold place + one short sentence, then a closing .note div with a concrete fallback plan for that day]
+
+<h2>[translate: "Find recommended places"]</h2>
+<p class="sub">[translate: "Tap a name to search it. N / K / G open Naver Map / Kakao Map / Google Maps."]</p>
+<div class="linkgrid">
+[2 to 4 <section class="linkbox"> elements grouping the trip's actual visitable spots (skip pure transit/logistics items like "leave home" or "check in to hotel") by rough theme or geographic cluster, e.g. "DAY 1 · Market & downtown" — each linkbox is:
+<section class="linkbox"><h3>[DAY N · short theme]</h3>
+[one <div class="spot"> per place: <b>[exact same place name used in its card above]</b><span>[3-6 word note, e.g. what to get/do there]</span><div class="maps"><a href="https://map.naver.com/p/search/[place name]" target="_blank">N</a><a href="https://map.kakao.com/?q=[place name]" target="_blank">K</a><a href="https://www.google.com/maps/search/?api=1&query=[place name] [destination]" target="_blank">G</a></div></div>]
+</section>]
+</div>
+
+[one closing .note div with a concrete overall fallback/contingency plan]
 </main>
-<footer>[practical caveats that age fast: hours, prices, weather-dependence — "여행 전날 다시 확인" spirit. No fabricated photo credits since no header photo is used.]</footer>
+<footer>[practical caveats that age fast: hours, prices, weather-dependence — translate the spirit of "double check the day before you go". No fabricated photo credits since no header photo is used.]</footer>
 </div>
 </body>
 </html>
@@ -121,6 +141,8 @@ Rules:
 - Don't invent specific restaurant/business names you're not reasonably confident exist; when unsure, describe the category instead (translated into ${languageName}, e.g. "an ocean-view cafe").
 - Card class: plain "card" for transit/logistics, "card alt" for sightseeing/activities, "card food" for meals — use the color coding consistently.
 - Match the number of days requested exactly — one tab and one <section> per day.
+- In the map-link hrefs, reuse each place's exact name as plain text (same characters as in its <b> above) — do not URL-encode it yourself, do not add quotes, just drop the name straight into the URL. The page handles this the same way regardless of script (Korean/English/Japanese).
+- Every place name used in a .maps link must exactly match a place name that actually appears in a card above it — never invent a spot only in the link grid.
 - Output nothing but the HTML document.`;
 }
 
