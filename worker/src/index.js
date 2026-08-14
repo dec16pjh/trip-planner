@@ -146,6 +146,57 @@ Rules:
 - Output nothing but the HTML document.`;
 }
 
+// Reads an Anthropic streaming (SSE) response and returns just the "text" content
+// block's text, ignoring any "thinking" block deltas that precede it. Only the text
+// block matters here — we're not surfacing reasoning to the user.
+async function readTextFromSSE(body) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let textBlockIndex = null;
+  let text = "";
+  let stopReason = null;
+  let inputTokens = null;
+  let outputTokens = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split("\n");
+    buffer = lines.pop(); // last line may be incomplete; carry it to the next chunk
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      let event;
+      try {
+        event = JSON.parse(line.slice(6));
+      } catch {
+        continue;
+      }
+
+      if (event.type === "message_start") {
+        inputTokens = event.message?.usage?.input_tokens ?? inputTokens;
+      } else if (event.type === "content_block_start" && event.content_block?.type === "text") {
+        textBlockIndex = event.index;
+      } else if (
+        event.type === "content_block_delta" &&
+        event.index === textBlockIndex &&
+        event.delta?.type === "text_delta"
+      ) {
+        text += event.delta.text;
+      } else if (event.type === "message_delta") {
+        if (event.delta?.stop_reason) stopReason = event.delta.stop_reason;
+        outputTokens = event.usage?.output_tokens ?? outputTokens;
+      }
+    }
+  }
+
+  console.log(`SSE usage: input=${inputTokens} output=${outputTokens} stop_reason=${stopReason}`);
+  return { text, stopReason };
+}
+
 async function generateItinerary(input, env) {
   const languageName = LANGUAGES[input.language] || LANGUAGES.ko;
   const companionsDesc = input.companions
@@ -174,7 +225,19 @@ Output language: ${languageName}`;
     },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 8000,
+      // Adaptive thinking runs by default on Sonnet 5 and its thinking tokens count against
+      // max_tokens same as the visible output. Its length is not tightly predictable —
+      // observed anywhere from a few thousand to well over 20000 tokens on the same kind of
+      // request — so a big itinerary (many days, many companions, the linkgrid section) can
+      // burn the budget on thinking alone and return little or no HTML. Capping effort keeps
+      // thinking bounded and predictable; 24000 max_tokens leaves generous room for the
+      // largest requests we allow (10 days) even so.
+      max_tokens: 24000,
+      output_config: { effort: "medium" },
+      // Non-streaming requests for a response this large were getting cut off by a ~100s
+      // upstream gateway timeout (524) before generation finished. Streaming keeps the
+      // connection actively receiving data, which avoids that idle/total timeout entirely.
+      stream: true,
       system: buildSystemPrompt(languageName, input.language),
       messages: [{ role: "user", content: userPrompt }],
     }),
@@ -185,9 +248,8 @@ Output language: ${languageName}`;
     throw new Error(`Anthropic API ${resp.status}: ${text.slice(0, 300)}`);
   }
 
-  const data = await resp.json();
-  const textBlock = data.content?.find((b) => b.type === "text");
-  let html = (textBlock?.text || "").trim();
+  const { text: streamedText, stopReason } = await readTextFromSSE(resp.body);
+  let html = streamedText.trim();
 
   // Models sometimes wrap the answer in a ```html fence despite instructions not to —
   // strip that instead of failing outright.
@@ -197,9 +259,19 @@ Output language: ${languageName}`;
 
   const doctypeIndex = html.search(/<!doctype html/i);
   if (doctypeIndex === -1) {
-    throw new Error(`Model did not return an HTML document (got: ${html.slice(0, 200)})`);
+    throw new Error(
+      `Model did not return an HTML document (stop_reason: ${stopReason}, got: ${html.slice(0, 200)})`
+    );
   }
-  return html.slice(doctypeIndex);
+
+  const document = html.slice(doctypeIndex);
+  // Ran out of max_tokens mid-generation: the document has a valid start but is missing
+  // its close and likely several days. Fail loudly instead of silently handing the visitor
+  // a broken half-page that renders as mostly blank.
+  if (stopReason === "max_tokens" || !/<\/html>\s*$/i.test(document)) {
+    throw new Error(`Generation was cut off before finishing (stop_reason: ${stopReason})`);
+  }
+  return document;
 }
 
 // Fire-and-forget log of one /generate call to a Google Sheet via an Apps Script Web App
