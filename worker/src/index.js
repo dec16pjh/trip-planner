@@ -197,6 +197,49 @@ async function readTextFromSSE(body) {
   return { text, stopReason };
 }
 
+// Status codes worth retrying: rate limiting and transient server-side hiccups. 4xx codes
+// like 401/403 mean the request itself is being rejected (bad/revoked key, account-level
+// block) and retrying just burns time without changing the outcome.
+const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 529]);
+const RETRY_DELAYS_MS = [500, 1500];
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function callAnthropic(requestBody, env) {
+  let lastError;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: requestBody,
+    });
+
+    if (resp.ok) return resp;
+
+    const text = await resp.text();
+    console.error(`Anthropic API error (attempt ${attempt + 1}): ${resp.status} ${text.slice(0, 500)}`);
+    lastError = { status: resp.status, text };
+
+    if (!RETRYABLE_STATUSES.has(resp.status) || attempt === RETRY_DELAYS_MS.length) break;
+    await sleep(RETRY_DELAYS_MS[attempt]);
+  }
+
+  // Surface a message that's safe to show a visitor — the raw API body is already logged
+  // above for debugging — plus a hint for the ones a visitor can't do anything about.
+  if (lastError.status === 401 || lastError.status === 403) {
+    throw new Error(
+      `The AI service rejected this request (HTTP ${lastError.status}). This usually means the site's API key needs attention — please let the site owner know.`
+    );
+  }
+  throw new Error(`The AI service is temporarily unavailable (HTTP ${lastError.status}). Please try again in a moment.`);
+}
+
 async function generateItinerary(input, env) {
   const languageName = LANGUAGES[input.language] || LANGUAGES.ko;
   const companionsDesc = input.companions
@@ -216,14 +259,8 @@ Budget level: ${input.budget}
 Interests: ${interestsDesc || "no strong preference, keep the pace comfortable"}
 Output language: ${languageName}`;
 
-  const resp = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
+  const resp = await callAnthropic(
+    JSON.stringify({
       model: MODEL,
       // Adaptive thinking runs by default on Sonnet 5 and its thinking tokens count against
       // max_tokens same as the visible output. Its length is not tightly predictable —
@@ -241,12 +278,8 @@ Output language: ${languageName}`;
       system: buildSystemPrompt(languageName, input.language),
       messages: [{ role: "user", content: userPrompt }],
     }),
-  });
-
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`Anthropic API ${resp.status}: ${text.slice(0, 300)}`);
-  }
+    env
+  );
 
   const { text: streamedText, stopReason } = await readTextFromSSE(resp.body);
   let html = streamedText.trim();
